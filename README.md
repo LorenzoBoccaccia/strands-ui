@@ -68,24 +68,6 @@ The application will run on `http://0.0.0.0:5000` by default.
 - Username: `admin@example.com`
 - Password: *Randomly generated and displayed in console on first startup*
 
-## Database Configuration
-
-This application supports both SQLite and PostgreSQL databases:
-
-- **SQLite**: Used by default for local development
-- **PostgreSQL**: Used when `SQLALCHEMY_DATABASE_URI` environment variable is set
-
-### Local SQLite Setup
-
-No additional configuration needed. The app creates `instance/strands.db` automatically.
-
-### PostgreSQL Setup (Optional)
-
-For PostgreSQL (including AWS DSQL):
-
-```bash
-export SQLALCHEMY_DATABASE_URI=your_postgresql_endpoint
-```
 
 ## Deployment
 
