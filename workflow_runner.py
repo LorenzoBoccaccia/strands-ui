@@ -7,6 +7,7 @@ import importlib
 import uuid
 from typing import Dict, Any, Optional, List
 import boto3
+import rapidjson
 # Import Strands classes or create mock implementations
 
 from strands import Agent as StrandsAgent, tool
@@ -405,9 +406,14 @@ class WorkflowRunner:
         """
         # Parse tool configuration if available
         config = {}
+        print("TOOL", tool.config)
         if tool.config:
-            config = json.loads(tool.config)
-        print("TOOL", tool.tool_type, tool.name,tool.description)
+            try:
+                config = json.loads(tool.config)
+            except:
+                config = cls._recover_json(tool.config)
+                
+        
         # Create the appropriate tool instance based on type
         if tool.tool_type == 'builtin':
             # Map tool name to the appropriate strands_tools module
@@ -452,29 +458,23 @@ class WorkflowRunner:
             # Create an MCP client based on the config
             command = config.get('command')
             args = config.get('args', [])
-            env = config.get('env', {})
-            
-            frozen_credentials = boto3.Session().get_credentials().get_frozen_credentials()
-            #extract the component (access key secret key and token)
-            aws_access_key = frozen_credentials.access_key
-            aws_secret_key = frozen_credentials.secret_key
-            aws_token = frozen_credentials.token
-            # in env do some string replacement, example
-            # "env": {
-            # "AWS_ACCESS_KEY_ID":"${aws_access_key}",
-            # "AWS_SECRET_ACCESS_KEY":"${aws_secret_key}",
-            # "AWS_SESSION_TOKEN":"${aws_token}",
-            # "FASTMCP_LOG_LEVEL": "ERROR",
-            # "BEDROCK_KB_RERANKING_ENABLED": "false"
-            # },
-            env = {
-                key: value.replace("${aws_access_key}", aws_access_key).replace("${aws_secret_key}", aws_secret_key).replace("${aws_token}", aws_token)
-                for key, value in env.items()
-            }
-            print("LAUNCHING WITH ENV", env)
-            print("COMMAND", command )
-            print("ARGS", args)
+            env = config.get('env', {} )
+            # If not found in direct format, check mcpServers format
 
+            if not command and 'mcpServers' in config:
+                for server_name, server_config in config['mcpServers'].items():
+                    if 'command' in server_config:
+                        command = server_config['command']
+                        args = server_config.get('args', [])
+                        env = config.get('env', {} )
+
+                        break
+
+            print("COMMAND", command)
+            print("ARGS", args)
+            print("ENV", env)
+            
+    
             # Create MCP client using stdio transport
             mcp_client = MCPClient(lambda: stdio_client(
                 StdioServerParameters(
@@ -720,6 +720,101 @@ class WorkflowRunner:
         
         return orchestrator
         
+    @classmethod
+    def _recover_json(cls, malformed_json: str) -> Dict[str, Any]:
+        """
+        Attempt to recover a dictionary from malformed JSON.
+        
+        This method uses several strategies to extract key-value pairs from malformed JSON:
+        1. Fix common syntax errors (missing quotes, trailing commas, etc.)
+        2. Use regex to extract key-value pairs
+        3. Fall back to extracting simple key-value patterns
+        
+        Args:
+            malformed_json: String containing potentially malformed JSON
+            
+        Returns:
+            Dictionary with recovered key-value pairs
+        """
+        if not malformed_json:
+            return {}
+            
+        # Strategy 1: Fix common syntax errors
+        fixed_json = malformed_json.strip()
+        
+        # Fix trailing commas in objects and arrays
+        fixed_json = re.sub(r',\s*}', '}', fixed_json)
+        fixed_json = re.sub(r',\s*]', ']', fixed_json)
+        
+        # Fix missing quotes around keys
+        fixed_json = re.sub(r'(\{|\,)\s*([a-zA-Z0-9_]+)\s*:', r'\1"\2":', fixed_json)
+        
+        if not fixed_json.startswith('{') and not fixed_json.startswith("["): 
+            fixed_json = '{' + fixed_json + '}'
+
+        # Try to parse the fixed JSON
+        try:
+            return json.loads(fixed_json)
+        except:
+            pass
+            
+        # Strategy 2: Use regex to extract key-value pairs
+        try:
+            result = {}
+            # Match "key": value patterns (string values)
+            string_pattern = r'"([^"]+)"\s*:\s*"([^"]*)"'
+            for match in re.finditer(string_pattern, malformed_json):
+                key, value = match.groups()
+                result[key] = value
+                
+            # Match "key": value patterns (numeric values)
+            num_pattern = r'"([^"]+)"\s*:\s*(-?\d+(?:\.\d+)?)'
+            for match in re.finditer(num_pattern, malformed_json):
+                key, value = match.groups()
+                try:
+                    # Convert to int or float as appropriate
+                    if '.' in value:
+                        result[key] = float(value)
+                    else:
+                        result[key] = int(value)
+                except:
+                    result[key] = value
+                    
+            # Match "key": true/false patterns (boolean values)
+            bool_pattern = r'"([^"]+)"\s*:\s*(true|false)'
+            for match in re.finditer(bool_pattern, malformed_json):
+                key, value = match.groups()
+                result[key] = (value.lower() == 'true')
+                
+            # If we found any key-value pairs, return them
+            if result:
+                return result
+        except:
+            pass
+            
+        # Strategy 3: Last resort - try to extract any key-value like patterns
+        try:
+            result = {}
+            # Look for patterns like key=value or key: value
+            pattern = r'([a-zA-Z0-9_]+)[=:]\s*([a-zA-Z0-9_./\\-]+)'
+            for match in re.finditer(pattern, malformed_json):
+                key, value = match.groups()
+                # Try to convert value to appropriate type
+                if value.lower() == 'true':
+                    result[key] = True
+                elif value.lower() == 'false':
+                    result[key] = False
+                elif value.isdigit():
+                    result[key] = int(value)
+                elif re.match(r'^-?\d+\.\d+$', value):
+                    result[key] = float(value)
+                else:
+                    result[key] = value
+            return result
+        except:
+            # If all strategies fail, return empty dict
+            return {}
+    
     @classmethod
     def _generate_workflow_prompt(cls, workflow_context):
         """
