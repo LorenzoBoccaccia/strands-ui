@@ -304,10 +304,7 @@ resource "aws_iam_policy" "bedrock_access_policy" {
       {
         Effect = "Allow"
         Action = [
-          "bedrock:InvokeModel",
-          "bedrock:InvokeModelWithResponseStream",
-          "bedrock:ListFoundationModels",
-          "bedrock:GetFoundationModel",
+          "bedrock:*",
           "sts:GetCallerIdentity"
         ]
         Resource = "*"

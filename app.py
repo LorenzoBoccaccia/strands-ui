@@ -366,6 +366,18 @@ def markdown_to_html(text):
     
     return clean_html
 
+# No-cache middleware to prevent caching of all responses
+@app.middleware("http")
+async def no_cache_middleware(request: Request, call_next):
+    response = await call_next(request)
+    
+    # Add no-cache headers to all responses
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    
+    return response
+
 # Authentication middleware to redirect unauthenticated users to login page
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
@@ -1229,8 +1241,7 @@ async def reset_user_password(
 async def startup_event():
     create_default_admin()
 
-# Run the application
 if __name__ == '__main__':
     import uvicorn
-    create_default_admin()
+    create_default_admin() 
     uvicorn.run("app:app", host="0.0.0.0", port=5000, reload=True, workers=8)

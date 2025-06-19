@@ -118,6 +118,33 @@
     .node.connecting {
         box-shadow: 0 0 0 3px var(--primary-color), 0 4px 8px rgba(0, 0, 0, 0.15);
     }
+    
+    /* Endpoint positioning */
+    .jtk-endpoint {
+        z-index: 15;
+    }
+    
+    .node-endpoint-right {
+        position: absolute;
+        right: -5px;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        z-index: 15;
+    }
+    
+    .node-endpoint-left {
+        position: absolute;
+        left: -5px;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        z-index: 15;
+    }
 </style>
 {% endblock %}
 

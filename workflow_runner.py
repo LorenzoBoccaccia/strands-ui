@@ -388,6 +388,7 @@ class WorkflowRunner:
             tools=agent_tools
         )
         strands_agent.__agent_name = agent_db.name
+        strands_agent.__agent_desctription = agent_db.description
         return strands_agent
         
     @classmethod
@@ -661,7 +662,7 @@ class WorkflowRunner:
         return node_data
         
     @classmethod
-    def _create_orchestrator(cls, workflow_context):
+    async def _create_orchestrator(cls, workflow_context):
         """
         Create an orchestrator agent that manages the workflow execution.
         
@@ -677,14 +678,14 @@ class WorkflowRunner:
         # Add agent tools
         for agent in workflow_context['agents']:
             #instantiate StrandsAgent class loading the right agent spec
-            def capture(__captured = agent):
-                def f(task: str):
+            async def capture(__captured = agent):
+                async def f(task: str):
                     return __captured(task)
                 return f
-            agent_wrapper = capture()
+            agent_wrapper = await capture()
             #name must be [a-zA-Z0-9_-]+ replace anything else with _ using a regex
             agent_wrapper.__name__ = re.sub(r'[^a-zA-Z0-9_-]', '_', agent.__agent_name)
-            agent_wrapper.__doc__ = f" Execute the agent called {agent.__agent_name} " 
+            agent_wrapper.__doc__ = agent.__agent_desctription or f" Execute the agent called {agent.__agent_name} " 
             
             agent_wrapper = tool(agent_wrapper)
 

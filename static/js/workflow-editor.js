@@ -5,13 +5,26 @@ document.addEventListener('DOMContentLoaded', function() {
     const workflowId = document.getElementById('workflow-id').value;
     console.log('Workflow editor initialized with ID:', workflowId);
     
-    // Initialize jsPlumb
+    // Initialize jsPlumb with simplified configuration
     const jsPlumbInstance = jsPlumb.getInstance({
-        Endpoint: ["Dot", { radius: 2 }],
-        Connector: ["Bezier", { curviness: 50 }],
-        HoverPaintStyle: { stroke: "#dc3545", strokeWidth: 3 },
+        Container: "workflow-canvas",
+        ConnectionsDetachable: false,
+        PaintStyle: { 
+            stroke: "#6c757d", 
+            strokeWidth: 2 
+        },
+        HoverPaintStyle: { 
+            stroke: "#dc3545", 
+            strokeWidth: 3 
+        },
         ConnectionOverlays: [
-            ["Arrow", { location: 1, width: 10, length: 10, id: "arrow" }],
+            ["Arrow", { 
+                location: 1, 
+                width: 12, 
+                length: 12, 
+                id: "arrow",
+                foldback: 0.8
+            }],
             ["Label", { 
                 label: "Click to delete", 
                 id: "label", 
@@ -19,9 +32,10 @@ document.addEventListener('DOMContentLoaded', function() {
                 visible: false
             }]
         ],
-        Container: "workflow-canvas",
-        // Ensure connections are always right to left
-        Anchors: ["Right", "Left"]
+        // Use Flowchart connector for more horizontal connections
+        Connector: ["Flowchart", { stub: 10, gap: 10, cornerRadius: 5, alwaysRespectStubs: true }],
+        // Ensure connections flow left to right with precise positioning
+        Anchors: [[1, 0.5, 1, 0], [0, 0.5, -1, 0]]
     });
     
     const canvas = document.getElementById('workflow-canvas');
@@ -184,41 +198,47 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
         
-        // Add endpoints based on node type
+        // Add endpoints based on node type - simplified approach
         if (type === 'input') {
-            // Input nodes can only have outgoing connections
+            // Input nodes only have output (right side) - using precise positioning
             jsPlumbInstance.addEndpoint(nodeEl, {
-                anchor: "Right",
+                anchor: [1, 0.5, 1, 0],  // x=1 (right edge), y=0.5 (middle), dx=1 (pointing right), dy=0 (no vertical orientation)
                 isSource: true,
+                isTarget: false,
                 maxConnections: -1,
-                endpoint: ["Dot", { radius: 3 }],
-                paintStyle: { fill: "#0d6efd" }
+                endpoint: ["Dot", { radius: 8 }],
+                paintStyle: { fill: "#0d6efd", stroke: "#0d6efd", strokeWidth: 2 }
             });
         } else if (type === 'output') {
-            // Output nodes can only have incoming connections
+            // Output nodes only have input (left side) - using precise positioning
             jsPlumbInstance.addEndpoint(nodeEl, {
-                anchor: "Left",
+                anchor: [0, 0.5, -1, 0],  // x=0 (left edge), y=0.5 (middle), dx=-1 (pointing left), dy=0 (no vertical orientation)
+                isSource: false,
                 isTarget: true,
                 maxConnections: -1,
-                endpoint: ["Dot", { radius: 3 }],
-                paintStyle: { fill: "#dc3545" }
+                endpoint: ["Dot", { radius: 8 }],
+                paintStyle: { fill: "#dc3545", stroke: "#dc3545", strokeWidth: 2 }
             });
         } else {
-            // Regular nodes have both incoming and outgoing connections
+            // Regular nodes have both input and output
+            // Output endpoint (right side) - using precise positioning
             jsPlumbInstance.addEndpoint(nodeEl, {
-                anchor: "Right",
+                anchor: [1, 0.5, 1, 0],  // x=1 (right edge), y=0.5 (middle), dx=1 (pointing right), dy=0 (no vertical orientation)
                 isSource: true,
+                isTarget: false,
                 maxConnections: -1,
-                endpoint: ["Dot", { radius: 3 }],
-                paintStyle: { fill: "#198754" }
+                endpoint: ["Dot", { radius: 8 }],
+                paintStyle: { fill: "#198754", stroke: "#198754", strokeWidth: 2 }
             });
             
+            // Input endpoint (left side) - using precise positioning
             jsPlumbInstance.addEndpoint(nodeEl, {
-                anchor: "Left",
+                anchor: [0, 0.5, -1, 0],  // x=0 (left edge), y=0.5 (middle), dx=-1 (pointing left), dy=0 (no vertical orientation)
+                isSource: false,
                 isTarget: true,
                 maxConnections: -1,
-                endpoint: ["Dot", { radius: 3 }],
-                paintStyle: { fill: "#0dcaf0" }
+                endpoint: ["Dot", { radius: 8 }],
+                paintStyle: { fill: "#0dcaf0", stroke: "#0dcaf0", strokeWidth: 2 }
             });
         }
         
@@ -244,6 +264,16 @@ document.addEventListener('DOMContentLoaded', function() {
         // Node click handler for creating connections
         nodeEl.addEventListener('click', function() {
             if (connecting && sourceNodeId !== nodeId) {
+                // Validate connection logic
+                const sourceNode = nodes[sourceNodeId];
+                const targetNode = nodes[nodeId];
+                
+                // Check if connection is valid
+                if (!canConnect(sourceNode.type, targetNode.type)) {
+                    alert('Invalid connection: Cannot connect these node types');
+                    return;
+                }
+                
                 // Create edge on the backend
                 const xhr = new XMLHttpRequest();
                 xhr.open('POST', `/api/workflow/${workflowId}/edges`, true);
@@ -285,15 +315,59 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     
-    // Create an edge
+    // Check if two node types can be connected
+    function canConnect(sourceType, targetType) {
+        // Output nodes cannot be sources
+        if (sourceType === 'output') return false;
+        // Input nodes cannot be targets
+        if (targetType === 'input') return false;
+        // All other combinations are valid
+        return true;
+    }
+    
+    // Create an edge using jsPlumb's programmatic connection
     window.createEdge = function(edgeId, sourceId, targetId) {
+        // Find the source and target endpoints
+        const sourceEl = document.getElementById(`node-${sourceId}`);
+        const targetEl = document.getElementById(`node-${targetId}`);
+        
+        if (!sourceEl || !targetEl) {
+            console.error('Source or target element not found', { sourceId, targetId });
+            return;
+        }
+        
+        // Get endpoints for the nodes
+        const sourceEndpoints = jsPlumbInstance.getEndpoints(sourceEl);
+        const targetEndpoints = jsPlumbInstance.getEndpoints(targetEl);
+        
+        // Find the right source endpoint (should be isSource=true)
+        const sourceEndpoint = sourceEndpoints ? sourceEndpoints.find(ep => ep.isSource) : null;
+        // Find the right target endpoint (should be isTarget=true)
+        const targetEndpoint = targetEndpoints ? targetEndpoints.find(ep => ep.isTarget) : null;
+        
+        if (!sourceEndpoint || !targetEndpoint) {
+            console.error('Could not find appropriate endpoints', { 
+                sourceEndpoints, 
+                targetEndpoints,
+                sourceEndpoint,
+                targetEndpoint
+            });
+            return;
+        }
+        
+        // Create the connection with explicit connector settings to ensure left-to-right flow
         const connection = jsPlumbInstance.connect({
-            source: `node-${sourceId}`,
-            target: `node-${targetId}`,
+            source: sourceEndpoint,
+            target: targetEndpoint,
             deleteEndpointsOnDetach: false,
-            // Explicitly set anchors to ensure right-to-left connections
-            anchors: ["Right", "Left"]
+            connector: ["Flowchart", { stub: 10, gap: 10, cornerRadius: 5, alwaysRespectStubs: true }],
+            anchors: [[1, 0.5, 1, 0], [0, 0.5, -1, 0]]  // Precise positioning for source and target anchors
         });
+        
+        if (!connection) {
+            console.error('Failed to create connection');
+            return;
+        }
         
         edges[edgeId] = {
             connection: connection,

@@ -337,8 +337,7 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .chat-messages {
-    height: 400px;
-    overflow-y: auto;
+    min-height: 400px;
     padding: 1.5rem;  /* Increased from 1rem to 1.5rem */
     border-radius: var(--border-radius) !important;
     box-shadow: inset 0 0 5px rgba(0, 0, 0, 0.05);
