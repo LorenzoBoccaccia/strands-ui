@@ -19,7 +19,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 visible: false
             }]
         ],
-        Container: "workflow-canvas"
+        Container: "workflow-canvas",
+        // Ensure connections are always right to left
+        Anchors: ["Right", "Left"]
     });
     
     const canvas = document.getElementById('workflow-canvas');
@@ -188,27 +190,35 @@ document.addEventListener('DOMContentLoaded', function() {
             jsPlumbInstance.addEndpoint(nodeEl, {
                 anchor: "Right",
                 isSource: true,
-                maxConnections: -1
+                maxConnections: -1,
+                endpoint: ["Dot", { radius: 3 }],
+                paintStyle: { fill: "#0d6efd" }
             });
         } else if (type === 'output') {
             // Output nodes can only have incoming connections
             jsPlumbInstance.addEndpoint(nodeEl, {
                 anchor: "Left",
                 isTarget: true,
-                maxConnections: -1
+                maxConnections: -1,
+                endpoint: ["Dot", { radius: 3 }],
+                paintStyle: { fill: "#dc3545" }
             });
         } else {
             // Regular nodes have both incoming and outgoing connections
             jsPlumbInstance.addEndpoint(nodeEl, {
                 anchor: "Right",
                 isSource: true,
-                maxConnections: -1
+                maxConnections: -1,
+                endpoint: ["Dot", { radius: 3 }],
+                paintStyle: { fill: "#198754" }
             });
             
             jsPlumbInstance.addEndpoint(nodeEl, {
                 anchor: "Left",
                 isTarget: true,
-                maxConnections: -1
+                maxConnections: -1,
+                endpoint: ["Dot", { radius: 3 }],
+                paintStyle: { fill: "#0dcaf0" }
             });
         }
         
@@ -280,7 +290,9 @@ document.addEventListener('DOMContentLoaded', function() {
         const connection = jsPlumbInstance.connect({
             source: `node-${sourceId}`,
             target: `node-${targetId}`,
-            deleteEndpointsOnDetach: false
+            deleteEndpointsOnDetach: false,
+            // Explicitly set anchors to ensure right-to-left connections
+            anchors: ["Right", "Left"]
         });
         
         edges[edgeId] = {
