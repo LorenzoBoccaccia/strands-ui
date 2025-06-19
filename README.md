@@ -2,11 +2,18 @@
 
 A web interface for visually configuring tools, creating agents, and building workflows.
 
+Users can create Agents and workflows using Strands Agents, then interact and operate trough a chat interface.
+
+DevOps can use MCP tools to integrate the UI with data sources.
+
+Local and remote deployment options available.
 
 ![Screenshot](screenshot.png "screenshot")
 
  
 ## Local Development Setup
+
+Runs locally in a python environment using a local sqlite database.
 
 ### Prerequisites
 
@@ -80,7 +87,14 @@ For PostgreSQL (including AWS DSQL):
 export SQLALCHEMY_DATABASE_URI=your_postgresql_endpoint
 ```
 
-## Build and Deployment
+## Deployment
+
+Will package and build the application, and deploy it using AppRunner.
+
+The application will run in a VPC with a public endpoint, internet access, and will use Cognito for user managment.
+
+![Architecture](architecture.png "Architecture")
+
 
 ### Prerequisites for Deployment
 
