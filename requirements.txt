@@ -1,0 +1,16 @@
+fastapi
+uvicorn
+sqlalchemy
+strands-agents
+strands-agents-tools
+alembic
+python-multipart
+jinja2
+psycopg2-binary
+markdown
+bleach
+Pygments
+markupsafe
+python-jose[cryptography]
+passlib[bcrypt]
+bcrypt==3.2.2

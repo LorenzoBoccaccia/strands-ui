@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+
+{% block title %}Edit Tool - {{ tool.name }} - Strands GUI{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>Edit Tool: {{ tool.name }}</h1>
+    <a href="/tools" class="btn btn-secondary">Back to Tools</a>
+</div>
+
+<div class="row">
+    <div class="col-md-8 offset-md-2">
+        <div class="card">
+            <div class="card-header">
+                <h5>Tool Details</h5>
+            </div>
+            <div class="card-body">
+                <form id="tool-details-form">
+                    <div class="mb-3">
+                        <label for="tool-name" class="form-label">Name</label>
+                        <input type="text" class="form-control" id="tool-name" value="{{ tool.name }}">
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="tool-description" class="form-label">Description</label>
+                        <textarea class="form-control" id="tool-description" rows="2">{{ tool.description }}</textarea>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="tool-type" class="form-label">Tool Type</label>
+                        <select class="form-select" id="tool-type">
+                            <option value="builtin" {% if tool.tool_type == 'builtin' %}selected{% endif %}>Built-in Strands Tool</option>
+                            <option value="mcp" {% if tool.tool_type == 'mcp' %}selected{% endif %}>MCP Service</option>
+                            <option value="agent" {% if tool.tool_type == 'agent' %}selected{% endif %}>Agent</option>
+                        </select>
+                    </div>
+                    
+                    <div id="agent-selector" class="mb-3" {% if tool.tool_type != 'agent' %}style="display: none;"{% endif %}>
+                        <label for="agent-id" class="form-label">Select Agent</label>
+                        <select class="form-select" id="agent-id">
+                            <option value="">Select an agent...</option>
+                            {% for agent in agents %}
+                            <option value="{{ agent.id }}" {% if tool.agent_id == agent.id %}selected{% endif %}>{{ agent.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    
+                    <div id="config-editor" class="mb-3" {% if tool.tool_type == 'agent' %}style="display: none;"{% endif %}>
+                        <label for="tool-config" class="form-label">Configuration (JSON)</label>
+                        <textarea class="form-control" id="tool-config" rows="10">{{ tool.config }}</textarea>
+                    </div>
+                    
+                    <button type="button" id="update-tool-btn" class="btn btn-primary">Update Tool</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    $(document).ready(function() {
+        const toolId = "{{ tool.id }}";
+        
+        // Toggle fields based on tool type
+        $('#tool-type').on('change', function() {
+            const toolType = $(this).val();
+            
+            if (toolType === 'agent') {
+                $('#agent-selector').show();
+                $('#config-editor').hide();
+            } else {
+                $('#agent-selector').hide();
+                $('#config-editor').show();
+            }
+        });
+        
+        $('#update-tool-btn').on('click', function() {
+            const name = $('#tool-name').val();
+            const description = $('#tool-description').val();
+            const toolType = $('#tool-type').val();
+            const agentId = toolType === 'agent' ? $('#agent-id').val() || null : null;
+            const config = toolType !== 'agent' ? $('#tool-config').val() : null;
+            
+            console.log('Submitting tool update:', {
+                name: name, 
+                description: description, 
+                tool_type: toolType, 
+                agent_id: agentId, 
+                config: config
+            });
+            
+            // Create the data object
+            const updateData = {
+                name: name,
+                description: description,
+                tool_type: toolType,
+                agent_id: agentId,
+                config: config
+            };
+            
+            console.log('JSON data to be sent:', JSON.stringify(updateData));
+            
+            // Send API request to update tool
+            $.ajax({
+                url: `/api/tool/${toolId}`,
+                type: 'PUT',
+                contentType: 'application/json',
+                data: JSON.stringify(updateData),
+                dataType: 'json',
+                success: function(response) {
+                    console.log('Update successful:', response);
+                    showSuccess('Tool updated successfully');
+                    // Redirect to tools page after a short delay
+                    setTimeout(function() {
+                        window.location.href = '/tools';
+                    }, 1000);
+                },
+                error: function(xhr, status, error) {
+                    console.error('Update failed:', xhr);
+                    console.error('Status:', status);
+                    console.error('Error:', error);
+                    console.error('Response Text:', xhr.responseText);
+                    
+                    let errorMessage = 'Error updating tool';
+                    try {
+                        if (xhr.responseJSON && xhr.responseJSON.error) {
+                            errorMessage += ': ' + xhr.responseJSON.error;
+                        } else if (xhr.responseText) {
+                            const errorData = JSON.parse(xhr.responseText);
+                            if (errorData.error) {
+                                errorMessage += ': ' + errorData.error;
+                            }
+                        }
+                    } catch (e) {
+                        errorMessage += ': ' + error;
+                    }
+                    
+                    showError(errorMessage);
+                }
+            });
+        });
+    });
+</script>
+{% endblock %}
