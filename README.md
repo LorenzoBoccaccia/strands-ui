@@ -2,6 +2,10 @@
 
 A web interface for visually configuring tools, creating agents, and building workflows.
 
+
+![Screenshot](screenshot.png "screenshot")
+
+ 
 ## Local Development Setup
 
 ### Prerequisites
