@@ -461,14 +461,30 @@ class WorkflowRunner:
             env = config.get('env', {} )
             # If not found in direct format, check mcpServers format
 
-            if not command and 'mcpServers' in config:
-                for server_name, server_config in config['mcpServers'].items():
-                    if 'command' in server_config:
-                        command = server_config['command']
-                        args = server_config.get('args', [])
-                        env = config.get('env', {} )
-
-                        break
+            # Recursively search for command in the config
+            if not command:
+                def find_command_in_config(config_dict):
+                    if not isinstance(config_dict, dict):
+                        return None, None, None
+                    
+                    # Check if command exists at this level
+                    if 'command' in config_dict:
+                        return (
+                            config_dict['command'],
+                            config_dict.get('args', []),
+                            config_dict.get('env', {})
+                        )
+                    
+                    # Recursively search in all dictionary values
+                    for key, value in config_dict.items():
+                        if isinstance(value, dict):
+                            cmd, arg, env = find_command_in_config(value)
+                            if cmd:
+                                return cmd, arg, env
+                    
+                    return None, None, None
+                
+                command, args, env = find_command_in_config(config)
 
             print("COMMAND", command)
             print("ARGS", args)
