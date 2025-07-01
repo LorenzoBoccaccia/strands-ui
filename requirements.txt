@@ -3,6 +3,7 @@ uvicorn
 sqlalchemy
 strands-agents
 strands-agents-tools
+strands-agents[otel]
 alembic
 python-multipart
 jinja2

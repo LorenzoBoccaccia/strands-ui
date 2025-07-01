@@ -238,8 +238,8 @@ resource "aws_apprunner_service" "app_service" {
           COGNITO_DOMAIN = "${var.app_name}-${var.environment}.auth.${data.aws_region.current.name}.amazoncognito.com"
           # Use a placeholder that will be updated after deployment
           COGNITO_REDIRECT_URI = "https://placeholder-url.amazonaws.com/auth/callback"
-          OTEL_EXPORTER_OTLP_ENDPOINT="https://xray.us-east-1.amazonaws.com/v1/traces"
-          STRANDS_OTEL_ENABLE_CONSOLE_EXPORT=true
+          #OTEL_EXPORTER_OTLP_ENDPOINT="https://xray.us-east-1.amazonaws.com/v1/traces"
+          #STRANDS_OTEL_ENABLE_CONSOLE_EXPORT=true
 
         }
       }
@@ -367,6 +367,8 @@ resource "null_resource" "docker_push" {
     app_py_hash = filemd5("${path.module}/app.py")
     # Monitor workflow_runner.py for changes
     workflow_runner_py_hash = filemd5("${path.module}/workflow_runner.py")
+    reqs = filemd5("${path.module}/requirements.txt")
+
     # Monitor all files in templates directory
     templates_hash = sha256(join("", [for f in fileset("${path.module}/templates", "**") : filemd5("${path.module}/templates/${f}")]))
     df_py_hash = filemd5("${path.module}/Dockerfile")

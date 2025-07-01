@@ -202,7 +202,7 @@ class WorkflowRunner:
         return cls._workflow_contexts.get(session_id)
     
     @classmethod
-    def set_active_workflow(cls, workflow_id: uuid.UUID, db_session) -> Dict[str, Any]:
+    async def set_active_workflow(cls, workflow_id: uuid.UUID, db_session) -> Dict[str, Any]:
         """
         Initialize a workflow instance and store it in the session.
         
@@ -238,7 +238,7 @@ class WorkflowRunner:
         workflow_context['agents'] = agents
         
         # Create an orchestrator agent that manages the workflow
-        orchestrator = cls._create_orchestrator(workflow_context)
+        orchestrator = await cls._create_orchestrator(workflow_context)
         workflow_context['orchestrator'] = orchestrator
         
         # Generate a unique session ID and store in the global dictionary
