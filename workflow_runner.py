@@ -202,7 +202,7 @@ class WorkflowRunner:
         return cls._workflow_contexts.get(session_id)
     
     @classmethod
-    async def set_active_workflow(cls, workflow_id: uuid.UUID, db_session) -> Dict[str, Any]:
+    def set_active_workflow(cls, workflow_id: uuid.UUID, db_session) -> Dict[str, Any]:
         """
         Initialize a workflow instance and store it in the session.
         
@@ -238,7 +238,7 @@ class WorkflowRunner:
         workflow_context['agents'] = agents
         
         # Create an orchestrator agent that manages the workflow
-        orchestrator = await cls._create_orchestrator(workflow_context)
+        orchestrator = cls._create_orchestrator(workflow_context)
         workflow_context['orchestrator'] = orchestrator
         
         # Generate a unique session ID and store in the global dictionary
@@ -678,7 +678,7 @@ class WorkflowRunner:
         return node_data
         
     @classmethod
-    async def _create_orchestrator(cls, workflow_context):
+    def _create_orchestrator(cls, workflow_context):
         """
         Create an orchestrator agent that manages the workflow execution.
         
@@ -694,11 +694,11 @@ class WorkflowRunner:
         # Add agent tools
         for agent in workflow_context['agents']:
             #instantiate StrandsAgent class loading the right agent spec
-            async def capture(__captured = agent):
-                async def f(task: str):
+            def capture(__captured = agent):
+                def f(task: str):
                     return __captured(task)
                 return f
-            agent_wrapper = await capture()
+            agent_wrapper = capture()
             #name must be [a-zA-Z0-9_-]+ replace anything else with _ using a regex
             agent_wrapper.__name__ = re.sub(r'[^a-zA-Z0-9_-]', '_', agent.__agent_name)
             agent_wrapper.__doc__ = agent.__agent_desctription or f" Execute the agent called {agent.__agent_name} " 

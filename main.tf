@@ -261,12 +261,28 @@ resource "aws_apprunner_service" "app_service" {
   # Set the instance role for the App Runner service
   instance_configuration {
     instance_role_arn = aws_iam_role.app_runner_role.arn
+    cpu               = "1024"
+    memory            = "2048"
   }
+
+  auto_scaling_configuration_arn = aws_apprunner_auto_scaling_configuration_version.app_scaling.arn
 
   depends_on = [
     aws_ecr_repository.app_repo,
     null_resource.docker_push
   ]
+}
+
+# Auto Scaling Configuration for App Runner
+resource "aws_apprunner_auto_scaling_configuration_version" "app_scaling" {
+  auto_scaling_configuration_name = "${var.app_name}-scaling-config"
+  max_concurrency                 = 10
+  max_size                        = 4
+  min_size                        = 1
+
+  tags = {
+    Name = "${var.app_name}-scaling-config"
+  }
 }
 
 # IAM Role for App Runner
