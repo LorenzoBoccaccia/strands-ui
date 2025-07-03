@@ -14,7 +14,7 @@
     --border-radius: 8px;
     --box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
     --transition-speed: 0.3s;
-    --sidebar-width: 250px;
+    --sidebar-width: 10em;
     --sidebar-bg: #2a2d3e;
     --sidebar-text: #e4e6eb;
     --sidebar-hover: #3a3f55;
@@ -28,6 +28,7 @@ body {
     min-height: 100vh;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
 }
 
 /* Layout structure */
@@ -730,10 +731,6 @@ h1, h2, h3, h4, h5, h6 {
     font-size: 0.9rem;
 }
 
-/* Container spacing */
-.container, .container-fluid {
-    padding: 1rem;  /* Added more padding to containers */
-}
 
 /* Row spacing in forms */
 .row {

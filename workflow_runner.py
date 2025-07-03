@@ -1,4 +1,5 @@
 # Store active workflows in memory (in a real-world application, this should be in a database or Redis)
+import datetime
 from typing import Dict, Any, Optional
 import uuid
 from models import Workflow, WorkflowNode, WorkflowEdge, Agent, Tool, AgentTool
@@ -216,8 +217,29 @@ def _processing_thread(workflow_context, input_queue: Queue, output_queue: Queue
         message = input_queue.get()
         if message == "_Q_E_E_TERMINATE":
             break
+        elif message == "_Q_E_E_RETRIEVE":
+            # Retrieve and send conversation history
+            history = workflow_context.get('conversation_history', [])
+            history_json = json.dumps(history, default=str)
+            output_queue.put("_Q_E_E_HISTORY" + history_json)
         else:
+            # Add message to conversation history
+            if 'conversation_history' not in workflow_context:
+                workflow_context['conversation_history'] = []
+            workflow_context['conversation_history'].append({
+                'role': 'user',
+                'content': message,
+                'timestamp': json.dumps(datetime.datetime.now(datetime.timezone.utc), default=str)
+            })
+            
             answer = orchestrator(message)
+            
+            # Add response to conversation history
+            workflow_context['conversation_history'].append({
+                'role': 'assistant', 
+                'content': str(answer),
+                'timestamp': json.dumps(datetime.datetime.now(datetime.timezone.utc), default=str)
+            })
 
             output_queue.put("_Q_E_E_ANSWERED")
     pass

@@ -156,12 +156,22 @@ def get_workflow_queues( session_id):
 def get_all_session_for_workflow( workflow_id):
     return [k for k, v in _synced_workflow_queues.items() if v == workflow_id]
 
-def clear_all_workflow_sessions( workflow_id):
-    sessions = get_all_session_for_workflow(workflow_id) 
-    #send "TERMINATE" to all input queues
-    for session in sessions:
-        _synced_workflow_queues[session]['input'].put("TERMINATE")
-        _synced_workflow_queues.pop(session, None)
+def clear_all_workflow_sessions(id_to_clear):
+    # Check if the ID is a session ID (conversation ID)
+    if id_to_clear in _synced_workflow_queues and isinstance(_synced_workflow_queues[id_to_clear], dict):
+        # It's a session ID, terminate and remove it
+        _synced_workflow_queues[id_to_clear]['input'].put("_Q_E_E_TERMINATE")
+        _synced_workflow_queues.pop(id_to_clear, None)
+    else:
+        # Assume it's a workflow ID, get all sessions for this workflow
+        sessions = get_all_session_for_workflow(id_to_clear) 
+        # Send "_Q_E_E_TERMINATE" to all input queues
+        for session in sessions:
+            _synced_workflow_queues[session]['input'].put("_Q_E_E_TERMINATE")
+            _synced_workflow_queues.pop(session, None)
+        # Also remove the workflow_id -> session_id mapping
+        if id_to_clear in _synced_workflow_queues:
+            _synced_workflow_queues.pop(id_to_clear, None)
 
 
 # FastAPI app
@@ -743,8 +753,15 @@ async def activate_workflow(
     }
 
 @app.post("/api/workflow/reset")
-async def reset_workflow(user: User = Depends(login_required)):
-    WorkflowRunner.clear_active_workflow()
+async def reset_workflow(data: Dict[str, Any] = {}, user: User = Depends(login_required)):
+    conversation_id = data.get('conversation_id')
+    if conversation_id:
+        # If conversation_id is provided, clear that specific session
+        # This will properly terminate the thread using the conversation ID
+        clear_all_workflow_sessions(conversation_id)
+    else:
+        # For backward compatibility, clear active workflow
+        WorkflowRunner.clear_active_workflow()
     return {"success": True}
 
 @app.post("/api/chat/message")
@@ -772,6 +789,12 @@ async def send_message(
             answer = qs['output'].get()
             if answer == "_Q_E_E_ANSWERED":
                 break
+            elif answer.startswith("_Q_E_E_HISTORY"):
+                # Requeue history messages and sleep
+                qs['output'].put(answer)
+                import time
+                time.sleep(0.2)
+                continue
             yield answer    
     try:
         return StreamingResponse(
@@ -790,6 +813,48 @@ async def send_message(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 content={"success": False, "error": str(e)}
             )
+
+@app.post("/api/chat/history")
+async def retrieve_conversation_history(
+    data: Dict[str, Any], 
+    user: User = Depends(login_required)
+):
+    """Retrieve the full conversation history from the processing thread."""
+    conversation_id = data.get('conversation_id')
+    
+    if not conversation_id:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={"success": False, "error": "Conversation ID is required"}
+        )
+    
+    qs = get_workflow_queues(conversation_id)
+    if not qs:
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content={"success": False, "error": "Conversation not found"}
+        )
+    
+    # Send retrieve message to processing thread
+    qs['input'].put("_Q_E_E_RETRIEVE")
+    
+    # Wait for history response
+    while True:
+        response = qs['output'].get()
+        if response.startswith("_Q_E_E_HISTORY"):
+            # Extract JSON from the response
+            history_json = response[len("_Q_E_E_HISTORY"):]
+            try:
+                history = json.loads(history_json)
+                return {"success": True, "history": history}
+            except json.JSONDecodeError:
+                return JSONResponse(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    content={"success": False, "error": "Failed to parse history"}
+                )
+        elif response == "_Q_E_E_ANSWERED":
+            # No history available
+            return {"success": True, "history": []}
 
 @app.get("/agents", response_class=HTMLResponse)
 async def list_agents(request: Request, user: User = Depends(configurer_required), db: Session = Depends(get_db)):
@@ -1272,5 +1337,4 @@ async def reset_user_password(
     
     return {"success": True}
 
-create_default_admin() 
-
+create_default_admin()

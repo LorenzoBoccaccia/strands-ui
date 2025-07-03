@@ -4,6 +4,7 @@
 
 {% block extra_css %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/dropdown-icons.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/chat-buttons.css') }}">
 {% endblock %}
 
 {% block content %}
@@ -80,6 +81,104 @@
         // Store workflow edit timestamps to detect changes
         const workflowEditTimestamps = {};
         
+        // Load from localStorage on page load
+        function loadFromStorage() {
+            const storedConversationId = localStorage.getItem('conversationId');
+            const storedWorkflowId = localStorage.getItem('workflowId');
+            
+            if (storedConversationId && storedWorkflowId) {
+                conversationId = storedConversationId;
+                selectedWorkflowId = storedWorkflowId;
+                lastSelectedWorkflowId = storedWorkflowId;
+                
+        // Set the workflow selector and trigger change to update custom dropdown UI
+        workflowSelect.val(storedWorkflowId).trigger('change');
+                
+                // Enable input
+                messageInput.prop('disabled', false);
+                sendButton.prop('disabled', false);
+                
+                // Retrieve conversation history
+                retrieveConversationHistory();
+            }
+        }
+        
+        function saveToStorage() {
+            if (conversationId && selectedWorkflowId) {
+                localStorage.setItem('conversationId', conversationId);
+                localStorage.setItem('workflowId', selectedWorkflowId);
+            }
+        }
+        
+        function clearStorage() {
+            localStorage.removeItem('conversationId');
+            localStorage.removeItem('workflowId');
+        }
+        
+        function retrieveConversationHistory() {
+            if (!conversationId) return;
+            
+            $.ajax({
+                url: '/api/chat/history',
+                method: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify({ conversation_id: conversationId }),
+                success: function(response) {
+                    if (response.success && response.history.length > 0) {
+                        clearChat();
+                        response.history.forEach(msg => {
+                            if (msg.role === 'user') {
+                                addUserMessage(msg.content);
+                            } else if (msg.role === 'assistant') {
+                                addAgentMessage(msg.content);
+                            }
+                        });
+                    }
+                },
+                error: function(xhr) {
+                    if (xhr.status === 404) {
+                        // Backend session was cleared, create new conversation
+                        console.log('Conversation not found, creating new session');
+                        clearStorage();
+                        conversationId = null;
+                        clearChat();
+                        
+                        // Reactivate the workflow to create new session
+                        if (selectedWorkflowId) {
+                            showTypingIndicator();
+                            const selectedType = $('option:selected', workflowSelect).data('type') || 'workflow';
+                            const selectedName = $('option:selected', workflowSelect).text().trim();
+                            
+                            $.ajax({
+                                url: `/api/workflow/activate/${selectedWorkflowId}`,
+                                method: 'POST',
+                                contentType: 'application/json',
+                                data: JSON.stringify({ type: selectedType }),
+                                success: function(response) {
+                                    removeTypingIndicator();
+                                    if (response.success) {
+                                        conversationId = response.workflow.id;
+                                        saveToStorage();
+                                        
+                                        const itemType = selectedType === 'agent' ? 'Agent' : 'Workflow';
+                                        addAgentMessage(`<i class="fas fa-robot me-2"></i>${itemType} "${selectedName}" loaded. How can I help you?`);
+                                    }
+                                },
+                                error: function() {
+                                    removeTypingIndicator();
+                                }
+                            });
+                        }
+                    } else {
+                        console.log('Failed to retrieve conversation history');
+                    }
+                }
+            });
+        }
+        
+        // Load from storage on page load
+        loadFromStorage();
+        
         workflowSelect.on('change', function() {
             selectedWorkflowId = $(this).val();
             
@@ -110,6 +209,7 @@
                             
                             // Store the conversation ID from the response
                             conversationId = response.workflow.id;
+                            saveToStorage();
                             
                             // Add welcome message for the selected workflow or agent
                             const itemType = selectedType === 'agent' ? 'Agent' : 'Workflow';
@@ -151,7 +251,12 @@
         
         resetButton.on('click', function() {
             // Reset the workflow on the server and clear the chat
-            resetWorkflowSession();
+            // Pass the conversation ID to properly terminate the thread
+            if (conversationId) {
+                resetWorkflowSession(conversationId);
+            } else {
+                resetWorkflowSession();
+            }
             clearChat();
             
             // Clear the workflow selection
@@ -159,20 +264,72 @@
             
             // Clear conversation ID
             conversationId = null;
+            clearStorage();
             
-            // Disable input
-            messageInput.prop('disabled', true);
-            sendButton.prop('disabled', true);
-            
-            // Add welcome message
-            addAgentMessage('<i class="fas fa-robot me-2"></i>Welcome to Strands GUI! Please select an agent or workflow to start chatting.');
+            // If a workflow was previously selected, reactivate it to create a new session
+            if (lastSelectedWorkflowId) {
+                // Set the workflow select back to the last selected workflow
+                workflowSelect.val(lastSelectedWorkflowId);
+                
+                const selectedType = $('option:selected', workflowSelect).data('type') || 'workflow';
+                const selectedName = $('option:selected', workflowSelect).text().trim();
+                
+                // Show loading indicator
+                showTypingIndicator();
+                
+                // Activate the workflow or agent on the server to create a new session
+                $.ajax({
+                    url: `/api/workflow/activate/${lastSelectedWorkflowId}`,
+                    method: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify({ type: selectedType }),
+                    success: function(response) {
+                        // Remove typing indicator
+                        removeTypingIndicator();
+                        
+                        if (response.success) {
+                            // Enable input
+                            messageInput.prop('disabled', false);
+                            sendButton.prop('disabled', false);
+                            
+                            // Store the new conversation ID
+                            conversationId = response.workflow.id;
+                            saveToStorage();
+                            
+                            // Add welcome message for the selected workflow or agent
+                            const itemType = selectedType === 'agent' ? 'Agent' : 'Workflow';
+                            addAgentMessage(`<i class="fas fa-robot me-2"></i>${itemType} "${selectedName}" loaded. How can I help you?`);
+                            
+                            // Store current timestamp for this workflow
+                            workflowEditTimestamps[lastSelectedWorkflowId] = Date.now();
+                        } else {
+                            addAgentMessage(`<i class="fas fa-exclamation-triangle me-2"></i>Error: ${response.error}`);
+                        }
+                    },
+                    error: function(xhr) {
+                        // Remove typing indicator
+                        removeTypingIndicator();
+                        
+                        const errorMsg = xhr.responseJSON ? xhr.responseJSON.error : 'Failed to activate workflow';
+                        addAgentMessage(`<i class="fas fa-exclamation-triangle me-2"></i>Error: ${errorMsg}`);
+                    }
+                });
+            } else {
+                // No workflow was previously selected, just disable input
+                messageInput.prop('disabled', true);
+                sendButton.prop('disabled', true);
+                
+                // Add welcome message
+                addAgentMessage('<i class="fas fa-robot me-2"></i>Welcome to Strands GUI! Please select an agent or workflow to start chatting.');
+            }
         });
         
-        function resetWorkflowSession() {
+        function resetWorkflowSession(conversationId) {
             $.ajax({
                 url: '/api/workflow/reset',
                 method: 'POST',
-                contentType: 'application/json'
+                contentType: 'application/json',
+                data: conversationId ? JSON.stringify({ conversation_id: conversationId }) : '{}'
             });
         }
         
