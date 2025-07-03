@@ -75,6 +75,7 @@
         
         let selectedWorkflowId = null;
         let lastSelectedWorkflowId = null;
+        let conversationId = null;
         
         // Store workflow edit timestamps to detect changes
         const workflowEditTimestamps = {};
@@ -106,6 +107,9 @@
                         if (response.success) {
                             messageInput.prop('disabled', false);
                             sendButton.prop('disabled', false);
+                            
+                            // Store the conversation ID from the response
+                            conversationId = response.workflow.id;
                             
                             // Add welcome message for the selected workflow or agent
                             const itemType = selectedType === 'agent' ? 'Agent' : 'Workflow';
@@ -139,7 +143,8 @@
         
         sendButton.on('click', sendMessage);
         messageInput.on('keypress', function(e) {
-            if (e.which === 13) {
+            if (e.which === 13 && !e.shiftKey) {
+                e.preventDefault();
                 sendMessage();
             }
         });
@@ -151,6 +156,9 @@
             
             // Clear the workflow selection
             workflowSelect.val('');
+            
+            // Clear conversation ID
+            conversationId = null;
             
             // Disable input
             messageInput.prop('disabled', true);
@@ -243,7 +251,7 @@
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ message: message })
+                body: JSON.stringify({ message: message, conversation_id: conversationId })
             })
             .then(response => {
                 if (!response.ok) {
@@ -263,7 +271,7 @@
                             console.log("Stream complete");
                             // Process any remaining data in the buffer
                             if (buffer.trim()) {
-                                processLine(buffer);
+                                processLine(buffer.replace('data: ','').replace('\nend',''));
                             }
                             // Remove waiting dots when stream is complete
                             $(`#${messageId} .waiting-dots`).remove();
@@ -272,11 +280,12 @@
                         
                         // Decode the chunk and add it to our buffer
                         const chunk = decoder.decode(value, { stream: true });
-                        console.log("Received chunk:", chunk);
+                        console.log("Received chunk");
+                        console.log(chunk)
                         buffer += chunk;
-                        
+                        console.log(buffer)                        
                         // Process complete lines
-                        const lines = buffer.split('\ndata: ');
+                        const lines = buffer.split('\nenddata: ');
                         buffer = lines.pop(); // Keep the last incomplete line in the buffer
                         
                         // Process each complete line
@@ -285,6 +294,13 @@
                                 processLine(line);
                             }
                         });
+
+                        //verify if the last line is complete (starts data: and end with \nend)
+                        if (buffer.startsWith('data: ') && buffer.endsWith('\nend')) {
+                            line = buffer.replace('data: ','').replace('\nend','')
+                            processLine(line);
+                            buffer = '';
+                        }
                         
                         // Continue reading
                         return processStream();
@@ -302,13 +318,13 @@
                         const jsonData = JSON.parse(cleanLine);
                         console.log("Parsed JSON:", jsonData);
                         
-                        if (jsonData.event && jsonData.event.messageStop ) {
-                                // Add a new line when receiving a messageStop event with stopReason 'end_turn'
+                        if (jsonData.delta && jsonData.delta.text) {
+                            if (window.lastToolUseId){
+                                window.lastToolUseId = null
                                 fullContent += '\n\n';
-                            } 
-                        if (jsonData.data) {
-                            // Append delta to content
-                            fullContent += jsonData.data;
+                            }
+                            // Append delta text to content
+                            fullContent += jsonData.delta.text;
                             
                             // Parse markdown and preserve the robot icon
                             const renderedMarkdown = marked.parse(fullContent);
@@ -530,7 +546,7 @@
         }
         
         // Check for workflow edits every 30 seconds
-        setInterval(checkForWorkflowEdits, 30000);
+        //setInterval(checkForWorkflowEdits, 30000);
     });
 </script>
 {% endblock %}

@@ -276,8 +276,8 @@ resource "aws_apprunner_service" "app_service" {
 # Auto Scaling Configuration for App Runner
 resource "aws_apprunner_auto_scaling_configuration_version" "app_scaling" {
   auto_scaling_configuration_name = "${var.app_name}-scaling-config"
-  max_concurrency                 = 10
-  max_size                        = 4
+  max_concurrency                 = 100
+  max_size                        = 1
   min_size                        = 1
 
   tags = {

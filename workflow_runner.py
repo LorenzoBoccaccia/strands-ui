@@ -9,7 +9,7 @@ from typing import Dict, Any, Optional, List
 import boto3
 import rapidjson
 # Import Strands classes or create mock implementations
-
+from multiprocessing import Manager, Process, Queue
 from strands import Agent as StrandsAgent, tool
 from strands.tools.mcp import MCPClient
 from mcp import stdio_client, StdioServerParameters
@@ -111,7 +111,7 @@ def think_tool(thought: str, cycle_count: int, system_prompt: str, agent: Any) -
         - Each cycle has visibility into previous cycle outputs to enable building upon insights
     """
     try:
-        return think.think(thought, cycle_count, system_prompt, agent=None)
+        return think.think(thought, cycle_count, system_prompt+". Be very concise. You MUST not provide an answer, only self reflection." , agent=None)
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -172,6 +172,56 @@ def use_llm_tool(tool: ToolUse, **kwargs: Any) -> ToolResult:
     """
     return use_llm.use_llm(tool, kwargs)
 
+
+def _processing_thread(workflow_context, input_queue: Queue, output_queue: Queue):
+    def top_level_callback_handler(**event):
+        if "delta" in event:
+            #remove properties that arent data or delta
+            event = {k: v for k, v in event.items() if k in ["delta", 'current_tool_use']}
+            print("ORCHESTRATOR", event)
+
+            output_queue.put("data: " + json.dumps(event, default=str) + "\nend")
+    def agent_level_callback_handler(**event):
+
+        if "delta" in event:
+            event = {k: v for k, v in event.items() if k in ["delta",'current_tool_use']}
+
+            if 'text' in event['delta']:
+                event['delta'] = {'toolUse':{'input':event['delta']['text']}}
+                event['current_tool_use'] = {'toolUseId':'agent', 'name': 'aws_documentation_retriever'}
+            print("AGENT", event)
+            output_queue.put("data: " + json.dumps(event, default=str) + "\nend")
+
+
+    agents = WorkflowRunner.create_nodes(workflow_context)
+    workflow_context['agents'] = agents
+    if len(agents) > 1:
+        # Create an orchestrator agent that manages the workflow
+        print("AGENTS", agents)
+        for agent in agents:
+            agent.callback_handler = agent_level_callback_handler
+        
+        orchestrator = WorkflowRunner._create_orchestrator(workflow_context)
+        orchestrator.callback_handler = top_level_callback_handler
+        workflow_context['orchestrator'] = orchestrator
+    else:
+        orchestrator = agents[0]
+        orchestrator.callback_handler = top_level_callback_handler
+        workflow_context['orchestrator'] = orchestrator
+        
+    print(f"LOADED WORKFLOW TO CONVERSATION ID")
+    output_queue.put("_Q_E_E_STARTED")
+    #loop input queue gets until receive a _Q_E_E_TERMINATE message
+    while True:
+        message = input_queue.get()
+        if message == "_Q_E_E_TERMINATE":
+            break
+        else:
+            answer = orchestrator(message)
+
+            output_queue.put("_Q_E_E_ANSWERED")
+    pass
+
 class WorkflowRunner:
     """
     Class responsible for managing workflow instances and handling message delivery
@@ -183,7 +233,32 @@ class WorkflowRunner:
     _workflow_contexts = {}
     # Dictionary to track workflow edit timestamps
     _workflow_edit_timestamps = {}
-    
+
+
+ 
+    @classmethod
+    def create_threaded_workflow(cls, workflow_id: uuid.UUID, db_session, input_queue, output_queue):
+        workflow = cls.load_workflow(workflow_id, db_session)
+        if not workflow:
+            raise ValueError(f"Workflow with ID {workflow_id} not found")
+                    
+
+
+        process = Process(target=_processing_thread, args=(workflow, input_queue, output_queue))
+        process.start()
+        return workflow['name']
+
+    @classmethod
+    def create_threaded_agent(cls, agent_id: uuid.UUID, db_session, input_queue, output_queue):
+        agent_context = cls.load_agent(agent_id, db_session)
+        if not agent_context:
+            raise ValueError(f"Agent with ID {agent_id} not found")
+
+        process = Process(target=_processing_thread, args=(agent_context, input_queue, output_queue))
+        process.start()
+        return agent_context['name']
+
+
     @classmethod
     def get_active_workflow(cls, session_id: str = None) -> Optional[Dict[str, Any]]:
         """
@@ -202,6 +277,147 @@ class WorkflowRunner:
         return cls._workflow_contexts.get(session_id)
     
     @classmethod
+    def load_workflow(cls, workflow_id: uuid.UUID, db_session) -> Dict[str, Any]:
+        """
+        Load workflow data from database without initializing agents/tools.
+        
+        Args:
+            workflow_id: ID of the workflow to load
+            db_session: SQLAlchemy database session
+            
+        Returns:
+            Dict containing the workflow data structure
+        """
+        # Load the workflow from the database
+        workflow = db_session.query(Workflow).get(workflow_id)
+        if not workflow:
+            raise ValueError(f"Workflow with ID {workflow_id} not found")
+            
+        nodes = db_session.query(WorkflowNode).filter_by(workflow_id=workflow_id).all()
+        edges = db_session.query(WorkflowEdge).filter_by(workflow_id=workflow_id).all()
+        
+        # Prepare node data with all database references resolved
+        prepared_nodes = {}
+        for node in nodes:
+            node_data = {
+                'id': node.id,
+                'type': node.node_type,
+                'position': {'x': node.position_x, 'y': node.position_y}
+            }
+            
+            # Add reference data based on node type
+            if node.node_type == 'agent' and node.reference_id:
+                agent = db_session.query(Agent).get(node.reference_id)
+                if agent:
+                    # Get all tools associated with this agent
+                    agent_tool_associations = db_session.query(AgentTool).filter_by(agent_id=agent.id).all()
+                    agent_tools = []
+                    for assoc in agent_tool_associations:
+                        tool = db_session.query(Tool).get(assoc.tool_id)
+                        if tool:
+                            agent_tools.append({
+                                'id': tool.id,
+                                'name': tool.name,
+                                'tool_type': tool.tool_type,
+                                'config': tool.config,
+                                'agent_id': tool.agent_id
+                            })
+                    
+                    node_data['reference'] = {
+                        'id': agent.id,
+                        'name': agent.name,
+                        'prompt': agent.prompt,
+                        'model_id': agent.model_id,
+                        'description': agent.description,
+                        'tools': agent_tools
+                    }
+            elif node.node_type == 'tool' and node.reference_id:
+                tool = db_session.query(Tool).get(node.reference_id)
+                if tool:
+                    node_data['reference'] = {
+                        'id': tool.id,
+                        'name': tool.name,
+                        'tool_type': tool.tool_type,
+                        'config': tool.config,
+                        'agent_id': tool.agent_id
+                    }
+            
+            prepared_nodes[node.id] = node_data
+        
+        # Build workflow context with all data needed for initialization
+        workflow_data = {
+            'id': workflow.id,
+            'name': workflow.name,
+            'description': workflow.description,
+            'model_id': workflow.model_id,
+            'nodes': prepared_nodes,
+            'edges': [{'source': edge.source_node_id, 'target': edge.target_node_id} for edge in edges],
+            'conversation_history': [],
+            'last_edited': getattr(workflow, 'last_edited', None)
+        }
+        
+        return workflow_data
+    
+    @classmethod
+    def load_agent(cls, agent_id: uuid.UUID, db_session) -> Dict[str, Any]:
+        """
+        Load agent data from database and create a minimal workflow context.
+        
+        Args:
+            agent_id: ID of the agent to load
+            db_session: SQLAlchemy database session
+            
+        Returns:
+            Dict containing the agent data in workflow context format
+        """
+        # Load the agent from the database
+        agent_db = db_session.query(Agent).get(agent_id)
+        if not agent_db:
+            raise ValueError(f"Agent with ID {agent_id} not found")
+        
+        # Get all tools associated with this agent
+        agent_tool_associations = db_session.query(AgentTool).filter_by(agent_id=agent_db.id).all()
+        agent_tools = []
+        for assoc in agent_tool_associations:
+            tool = db_session.query(Tool).get(assoc.tool_id)
+            if tool:
+                agent_tools.append({
+                    'id': tool.id,
+                    'name': tool.name,
+                    'tool_type': tool.tool_type,
+                    'config': tool.config,
+                    'agent_id': tool.agent_id
+                })
+        
+        # Create a single node representing this agent with its tools
+        agent_node = {
+            'id': agent_id,
+            'type': 'agent',
+            'reference': {
+                'id': agent_db.id,
+                'name': agent_db.name,
+                'prompt': agent_db.prompt,
+                'model_id': agent_db.model_id,
+                'description': agent_db.description,
+                'tools': agent_tools
+            }
+        }
+        
+        # Initialize workflow context with the agent as a single node
+        workflow_context = {
+            'id': agent_id,
+            'name': agent_db.name,
+            'description': agent_db.description,
+            'model_id': agent_db.model_id,
+            'nodes': {str(agent_id): agent_node},
+            'edges': [],
+            'conversation_history': [],
+            'last_edited': None
+        }
+        
+        return workflow_context
+    
+    @classmethod
     def set_active_workflow(cls, workflow_id: uuid.UUID, db_session) -> Dict[str, Any]:
         """
         Initialize a workflow instance and store it in the session.
@@ -213,28 +429,11 @@ class WorkflowRunner:
         Returns:
             Dict containing the initialized workflow data
         """
-        # Load the workflow from the database
-        workflow = db_session.query(Workflow).get(workflow_id)
-        if not workflow:
-            raise ValueError(f"Workflow with ID {workflow_id} not found")
-            
-        nodes = db_session.query(WorkflowNode).filter_by(workflow_id=workflow_id).all()
-        edges = db_session.query(WorkflowEdge).filter_by(workflow_id=workflow_id).all()
-        
-        # Initialize workflow context (this will store the state of the workflow)
-        workflow_context = {
-            'id': workflow.id,
-            'name': workflow.name,
-            'description': workflow.description,
-            'model_id': workflow.model_id,
-            'nodes': {node.id: cls._prepare_node(node, db_session) for node in nodes},
-            'edges': [{'source': edge.source_node_id, 'target': edge.target_node_id} for edge in edges],
-            'conversation_history': [],
-            'last_edited': getattr(workflow, 'last_edited', None)
-        }
+        # Load workflow data from database
+        workflow_context = cls.load_workflow(workflow_id, db_session)
         
         # Create agent instances for all agent nodes
-        agents = cls.create_nodes(workflow_context, db_session)
+        agents = cls.create_nodes(workflow_context)
         workflow_context['agents'] = agents
         
         # Create an orchestrator agent that manages the workflow
@@ -242,7 +441,7 @@ class WorkflowRunner:
         workflow_context['orchestrator'] = orchestrator
         
         # Generate a unique session ID and store in the global dictionary
-        session_id = str(workflow.id)
+        session_id = str(workflow_context['id'])
         cls._workflow_contexts[session_id] = workflow_context
         
         # Store the current timestamp for this workflow
@@ -299,29 +498,28 @@ class WorkflowRunner:
         return workflow_context
     
     @classmethod
-    def create_nodes(cls, workflow_context, db_session):
+    def create_nodes(cls, workflow_context):
         agents = []
         tools = []
         for node_id, node_data in workflow_context['nodes'].items():
             if node_data['type'] == 'agent':
-                agent = cls.create_agent(node_data, db_session)
+                agent = cls.create_agent(node_data)
                 if agent:
                     agents.append(agent)
             elif node_data['type'] == 'tool':
-                tool_instance = cls.create_tool(node_data, db_session)
+                tool_instance = cls.create_tool(node_data)
                 if tool_instance:
                     tools.append(tool_instance)
         workflow_context['tools'] = tools
         return agents
 
     @classmethod
-    def create_tool(cls, tool_data, db_session):
+    def create_tool(cls, tool_data):
         """
         Create a Strands tool instance from a tool node.
         
         Args:
             tool_data: Dictionary containing tool configuration
-            db_session: SQLAlchemy database session
             
         Returns:
             Strands tool instance
@@ -329,24 +527,19 @@ class WorkflowRunner:
         if not tool_data.get('reference'):
             return None
             
-        tool_id = tool_data['reference']['id']
-        tool_db = db_session.query(Tool).get(tool_id)
+        tool_ref = tool_data['reference']
         
-        if not tool_db:
-            return None
-            
-        # Create tool instance based on type
-        tool_instance = cls._create_tool_instance(tool_db)
+        # Create tool instance based on type using reference data
+        tool_instance = cls._create_tool_instance_from_data(tool_ref)
         return tool_instance
 
     @classmethod
-    def create_agent(cls, agent_data, db_session):
+    def create_agent(cls, agent_data):
         """
         Create a Strands agent with its tools.
         
         Args:
             agent_data: Dictionary containing agent configuration
-            db_session: SQLAlchemy database session
             
         Returns:
             StrandsAgent instance
@@ -354,28 +547,17 @@ class WorkflowRunner:
         if not agent_data.get('reference'):
             return None
             
-        agent_id = agent_data['reference']['id']
-        agent_db = db_session.query(Agent).get(agent_id)
+        agent_ref = agent_data['reference']
         
-        if not agent_db:
-            return None
-            
-        # Get all tools associated with this agent
+        # Create tools from reference data
         agent_tools = []
-        agent_tool_associations = db_session.query(AgentTool).filter_by(agent_id=agent_id).all()
-        
-        for assoc in agent_tool_associations:
-            tool = db_session.query(Tool).get(assoc.tool_id)
-            if not tool:
-                continue
-                
-            # Create tool instance based on type
-            tool_instance = cls._create_tool_instance(tool)
+        for tool_data in agent_ref.get('tools', []):
+            tool_instance = cls._create_tool_instance_from_data(tool_data)
             if tool_instance:
-                agent_tools+=tool_instance
+                agent_tools += tool_instance
         
         # Create a Strands agent instance
-        model_arg = agent_db.model_id if agent_db.model_id else None
+        model_arg = agent_ref.get('model_id')
         
         # Use cross-region profile if available
         if model_arg:
@@ -385,37 +567,35 @@ class WorkflowRunner:
         print("MODEL FOR AGENT ", model_arg)
         strands_agent = StrandsAgent(
             model=model_arg,
-            system_prompt=agent_db.prompt,
+            system_prompt=agent_ref['prompt'],
             tools=agent_tools
         )
-        strands_agent.__agent_name = agent_db.name
-        strands_agent.__agent_desctription = agent_db.description
+        strands_agent.__agent_name = agent_ref['name']
+        strands_agent.__agent_desctription = agent_ref.get('description', '')
         return strands_agent
         
     @classmethod
-    def _create_tool_instance(cls, tool: Tool, db_session=None):
+    def _create_tool_instance_from_data(cls, tool_data: Dict[str, Any]):
         """
-        Create a Strands tool instance based on its type.
+        Create a Strands tool instance from tool data.
         
         Args:
-            tool: Tool model instance from database
-            db_session: SQLAlchemy database session (optional)
+            tool_data: Dictionary containing tool data
             
         Returns:
             A Strands tool instance (BuiltinTool, MCPTool, or StrandsAgentTool)
         """
         # Parse tool configuration if available
         config = {}
-        print("TOOL", tool.config)
-        if tool.config:
+        print("TOOL", tool_data.get('config'))
+        if tool_data.get('config'):
             try:
-                config = json.loads(tool.config)
+                config = json.loads(tool_data['config'])
             except:
-                config = cls._recover_json(tool.config)
+                config = cls._recover_json(tool_data['config'])
                 
-        
         # Create the appropriate tool instance based on type
-        if tool.tool_type == 'builtin':
+        if tool_data['tool_type'] == 'builtin':
             # Map tool name to the appropriate strands_tools module
             tool_mapping = {
                 'file_read': file_read,
@@ -443,31 +623,27 @@ class WorkflowRunner:
                 'slack': slack,
                 'speak': speak,
                 'stop': stop,
-                'use_llm': use_llm_tool,
+                #'use_llm': use_llm_tool,
                 'workflow': workflow,
                 'batch': batch
             }
             
-            # Get the tool from the mapping or use a generic BuiltinTool as fallback
-            tool_module = tool_mapping.get(tool.name.lower())
-            
+            # Get the tool from the mapping
+            tool_module = tool_mapping.get(tool_data['name'].lower())
             return [tool_module]
             
-            
-        elif tool.tool_type == 'mcp':
+        elif tool_data['tool_type'] == 'mcp':
             # Create an MCP client based on the config
             command = config.get('command')
             args = config.get('args', [])
-            env = config.get('env', {} )
-            # If not found in direct format, check mcpServers format
-
-            # Recursively search for command in the config
+            env = config.get('env', {})
+            
+            # Recursively search for command in the config if not found
             if not command:
                 def find_command_in_config(config_dict):
                     if not isinstance(config_dict, dict):
                         return None, None, None
                     
-                    # Check if command exists at this level
                     if 'command' in config_dict:
                         return (
                             config_dict['command'],
@@ -475,7 +651,6 @@ class WorkflowRunner:
                             config_dict.get('env', {})
                         )
                     
-                    # Recursively search in all dictionary values
                     for key, value in config_dict.items():
                         if isinstance(value, dict):
                             cmd, arg, env = find_command_in_config(value)
@@ -490,7 +665,6 @@ class WorkflowRunner:
             print("ARGS", args)
             print("ENV", env)
             
-    
             # Create MCP client using stdio transport
             mcp_client = MCPClient(lambda: stdio_client(
                 StdioServerParameters(
@@ -505,38 +679,40 @@ class WorkflowRunner:
             tools = mcp_client.list_tools_sync()
             return tools
             
-        elif tool.tool_type == 'agent' and tool.agent_id:
-            # For agent tools, recursively create the agent
-            if db_session:
-                agent_db = db_session.query(Agent).get(tool.agent_id)
-            else:
-                # Fallback to direct query if no session provided
-                from sqlalchemy import create_engine
-                from sqlalchemy.orm import sessionmaker
-                engine = create_engine(os.environ.get('SQLALCHEMY_DATABASE_URI', 'sqlite:///strands.db'))
-                Session = sessionmaker(bind=engine)
-                session = Session()
-                agent_db = session.query(Agent).get(tool.agent_id)
-                session.close()
-                
-            if agent_db:
-                # Create a Strands agent to use as a tool
-                agent = cls.create_agent({
-                    'reference': {
-                        'id': agent_db.id,
-                        'name': agent_db.name,
-                        'prompt': agent_db.prompt
-                    }
-                }, db_session)
-                
-                def agent_tool_function(message):
-                    # Use the agent to process the message
-                    return agent(message)
-                agent_tool_function.__name__ = tool.name
-                agent_tool_function.__doc__ = tool.description
-                return [agent_tool_function]
+        elif tool_data['tool_type'] == 'agent' and tool_data.get('agent_id'):
+            # For agent tools, create a function that calls the agent
+            def agent_tool_function(message):
+                # This would need to be implemented to call the agent
+                # For now, return a placeholder
+                return f"Agent tool {tool_data['name']} called with: {message}"
+            
+            agent_tool_function.__name__ = tool_data['name']
+            agent_tool_function.__doc__ = f"Tool that calls agent {tool_data['name']}"
+            return [agent_tool_function]
         
         return None
+    
+    @classmethod
+    def _create_tool_instance(cls, tool: Tool, db_session=None):
+        """
+        Create a Strands tool instance based on its type.
+        
+        Args:
+            tool: Tool model instance from database
+            db_session: SQLAlchemy database session (optional)
+            
+        Returns:
+            A Strands tool instance (BuiltinTool, MCPTool, or StrandsAgentTool)
+        """
+        # Convert Tool model to dict and use the new method
+        tool_data = {
+            'id': tool.id,
+            'name': tool.name,
+            'tool_type': tool.tool_type,
+            'config': tool.config,
+            'agent_id': tool.agent_id
+        }
+        return cls._create_tool_instance_from_data(tool_data)
 
     @classmethod
     def clear_active_workflow(cls, session_id: str = None) -> None:
@@ -638,44 +814,7 @@ class WorkflowRunner:
         })
         
     
-    @staticmethod
-    def _prepare_node(node: WorkflowNode, db_session) -> Dict[str, Any]:
-        """
-        Prepare a node for use in the workflow context.
-        
-        Args:
-            node: The WorkflowNode to prepare
-            db_session: SQLAlchemy database session
-            
-        Returns:
-            Dict containing the node data
-        """
-        node_data = {
-            'id': node.id,
-            'type': node.node_type,
-            'position': {'x': node.position_x, 'y': node.position_y}
-        }
-        
-        # Add reference data based on node type
-        if node.node_type == 'agent' and node.reference_id:
-            agent = db_session.query(Agent).get(node.reference_id)
-            if agent:
-                node_data['reference'] = {
-                    'id': agent.id,
-                    'name': agent.name,
-                    'prompt': agent.prompt
-                }
-        elif node.node_type == 'tool' and node.reference_id:
-            tool = db_session.query(Tool).get(node.reference_id)
-            if tool:
-                node_data['reference'] = {
-                    'id': tool.id,
-                    'name': tool.name,
-                    'type': tool.tool_type,
-                    'config': tool.config
-                }
-        
-        return node_data
+
         
     @classmethod
     def _create_orchestrator(cls, workflow_context):

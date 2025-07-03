@@ -1,3 +1,4 @@
+from multiprocessing import Manager
 from fastapi import FastAPI, Request, Response, Depends, HTTPException, Form, status, Cookie
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -138,6 +139,31 @@ SECRET_KEY = os.environ.get('SECRET_KEY', 'dev_key_for_session')
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
 
+
+sync_manager = Manager()
+_synced_workflow_queues = sync_manager.dict()
+
+def init_workflow_queues(workflow_id, session_id):
+    _synced_workflow_queues[session_id] = sync_manager.dict()
+    _synced_workflow_queues[session_id]['input'] = sync_manager.Queue()
+    _synced_workflow_queues[session_id]['output'] = sync_manager.Queue()
+    _synced_workflow_queues[workflow_id] = session_id
+    return _synced_workflow_queues[session_id]
+    
+def get_workflow_queues( session_id):
+    return _synced_workflow_queues.get(session_id)
+
+def get_all_session_for_workflow( workflow_id):
+    return [k for k, v in _synced_workflow_queues.items() if v == workflow_id]
+
+def clear_all_workflow_sessions( workflow_id):
+    sessions = get_all_session_for_workflow(workflow_id) 
+    #send "TERMINATE" to all input queues
+    for session in sessions:
+        _synced_workflow_queues[session]['input'].put("TERMINATE")
+        _synced_workflow_queues.pop(session, None)
+
+
 # FastAPI app
 app = FastAPI(title="Strands GUI")
 
@@ -218,6 +244,13 @@ def create_default_admin():
                 db.commit()
                 print("Created default admin user for local development")
                 print(f"Admin Password: {random_password}")
+            else:
+                alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
+                random_password = ''.join(secrets.choice(alphabet) for _ in range(16))
+                admin.set_password(random_password)
+                db.commit()
+                print(f"Admin Password: {random_password}")
+
     finally:
         db.close()
 
@@ -690,16 +723,22 @@ async def activate_workflow(
     
     if item_type == 'agent':
         # Use the agent as the orchestrator
-        workflow_context = WorkflowRunner.set_active_agent(workflow_id, db)
+        session_id = str(uuid.uuid4())
+        qs = init_workflow_queues(workflow_id, session_id)
+        name = WorkflowRunner.create_threaded_agent(workflow_id, db, qs['input'], qs['output'])
+        qs['output'].get()
     else:
         # Use the workflow as before
-        workflow_context = WorkflowRunner.set_active_workflow(workflow_id, db)
-        
+        session_id = str(uuid.uuid4())
+        qs = init_workflow_queues(workflow_id, session_id)
+        name =WorkflowRunner.create_threaded_workflow(workflow_id, db, qs['input'], qs['output'])
+        qs['output'].get()
+    
     return {
         "success": True,
         "workflow": {
-            "id": workflow_context['id'],
-            "name": workflow_context['name']
+            "id": session_id,
+            "name": name
         }
     }
 
@@ -715,32 +754,29 @@ async def send_message(
     db: Session = Depends(get_db)
 ):
     message = data.get('message', '').strip()
+    conversation_id = data.get('conversation_id')
     
+    #get input channel for conversation id
+    qs = get_workflow_queues(conversation_id)
+
+
+
     if not message:
         return JSONResponse(
             status_code=status.HTTP_400_BAD_REQUEST,
             content={"success": False, "error": "Message cannot be empty"}
         )
-    
+    def _event_generator(message=message):
+        qs['input'].put(message)
+        while True:
+            answer = qs['output'].get()
+            if answer == "_Q_E_E_ANSWERED":
+                break
+            yield answer    
     try:
-        # Get token from cookie to identify the session
-        token = data.get('token')
-        
-        # Extract session ID from token if available
-        session_id = None
-        if token:
-            try:
-                payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-                user_id = payload.get("sub")
-                if user_id:
-                    session_id = user_id
-            except JWTError:
-                pass
-        
-        
         return StreamingResponse(
-        WorkflowRunner.deliver_message(message, session_id, db),
-        media_type="text/plain"
+            _event_generator(),
+            media_type="text/plain"
         )
     except ValueError as e:
         if "workflow edited" in str(e).lower():
@@ -1236,12 +1272,5 @@ async def reset_user_password(
     
     return {"success": True}
 
-# Create default admin user on startup
-@app.on_event("startup")
-async def startup_event():
-    create_default_admin()
+create_default_admin() 
 
-if __name__ == '__main__':
-    import uvicorn
-    create_default_admin() 
-    uvicorn.run("app:app", host="0.0.0.0", port=5000, workers=10, reload=True)
