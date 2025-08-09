@@ -26,6 +26,7 @@ from pygments.formatters import HtmlFormatter
 from pygments.lexers import get_lexer_by_name
 from functools import wraps
 import requests
+import traceback
 
 from models import Base, Tool, Agent, Workflow, WorkflowNode, WorkflowEdge, AgentTool, User
 from models import get_password_hash, verify_password
@@ -167,6 +168,8 @@ def clear_all_workflow_sessions(id_to_clear):
         sessions = get_all_session_for_workflow(id_to_clear) 
         # Send "_Q_E_E_TERMINATE" to all input queues
         for session in sessions:
+            print(            session)
+            print (session in _synced_workflow_queues,_synced_workflow_queues)
             _synced_workflow_queues[session]['input'].put("_Q_E_E_TERMINATE")
             _synced_workflow_queues.pop(session, None)
         # Also remove the workflow_id -> session_id mapping
@@ -1220,6 +1223,53 @@ async def delete_edge(
     db.commit()
     return {"success": True}
 
+@app.post("/api/tool/mcp/discover")
+async def discover_mcp_tools(
+    data: Dict[str, Any], 
+    user: User = Depends(login_required)
+):
+    """Discover available tools from MCP configuration."""
+    try:
+        config = data.get('config', '{}')
+        if isinstance(config, str):
+            from mcp_helpers import parse_config
+            config = parse_config(config)
+        
+        from strands.tools.mcp import MCPClient
+        from mcp import stdio_client, StdioServerParameters
+        from mcp_helpers import locate_config
+        
+        command, args, env, _ = locate_config(config)
+        
+        if not command:
+            return {"success": False, "error": "No command specified in configuration"}
+        
+        # Create MCP client and use as context manager
+        mcp_client = MCPClient(lambda: stdio_client(
+            StdioServerParameters(
+                command=command,
+                args=args,
+                env=env
+            )
+        ))
+        
+        # Get tools from the MCP server using context manager
+        with mcp_client:
+            tools = mcp_client.list_tools_sync()
+        
+        # Extract tool names
+        tool_names = [getattr(tool, 'name', getattr(tool, 'tool_name', str(tool))) for tool in tools] if tools else []
+        
+        return {"success": True, "tools": tool_names}
+        
+    except Exception as e:
+        traceback.print_exc()
+
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"success": False, "error": str(e)}
+        )
+
 @app.get("/api/bedrock/models")
 async def list_bedrock_models(user: User = Depends(login_required)):
     """Get a list of available Bedrock models with text output modality and on-demand inference."""
@@ -1233,6 +1283,7 @@ async def list_bedrock_models(user: User = Depends(login_required)):
             "default_model_name": default_model["name"]
         }
     except Exception as e:
+        traceback.print_exc()
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content={"error": f"Failed to list Bedrock models: {str(e)}"}

@@ -40,4 +40,4 @@ EXPOSE 5000
 
 
 # Run the application
-ENTRYPOINT ["python", "app.py"]
+ENTRYPOINT ["python", "main.py"]

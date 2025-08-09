@@ -179,7 +179,7 @@ def _processing_thread(workflow_context, input_queue: Queue, output_queue: Queue
         if "delta" in event:
             #remove properties that arent data or delta
             event = {k: v for k, v in event.items() if k in ["delta", 'current_tool_use']}
-            print("ORCHESTRATOR", event)
+            
 
             output_queue.put("data: " + json.dumps(event, default=str) + "\nend")
     def agent_level_callback_handler(**event):
@@ -190,7 +190,7 @@ def _processing_thread(workflow_context, input_queue: Queue, output_queue: Queue
             if 'text' in event['delta']:
                 event['delta'] = {'toolUse':{'input':event['delta']['text']}}
                 event['current_tool_use'] = {'toolUseId':'agent', 'name': 'aws_documentation_retriever'}
-            print("AGENT", event)
+            
             output_queue.put("data: " + json.dumps(event, default=str) + "\nend")
 
 
@@ -198,7 +198,7 @@ def _processing_thread(workflow_context, input_queue: Queue, output_queue: Queue
     workflow_context['agents'] = agents
     if len(agents) > 1:
         # Create an orchestrator agent that manages the workflow
-        print("AGENTS", agents)
+        
         for agent in agents:
             agent.callback_handler = agent_level_callback_handler
         
@@ -210,7 +210,7 @@ def _processing_thread(workflow_context, input_queue: Queue, output_queue: Queue
         orchestrator.callback_handler = top_level_callback_handler
         workflow_context['orchestrator'] = orchestrator
         
-    print(f"LOADED WORKFLOW TO CONVERSATION ID")
+    
     output_queue.put("_Q_E_E_STARTED")
     #loop input queue gets until receive a _Q_E_E_TERMINATE message
     while True:
@@ -586,7 +586,7 @@ class WorkflowRunner:
             from bedrock_models import get_model_with_cross_region_profile
             model_arg = get_model_with_cross_region_profile(model_arg)
             
-        print("MODEL FOR AGENT ", model_arg)
+        
         strands_agent = StrandsAgent(
             model=model_arg,
             system_prompt=agent_ref['prompt'],
@@ -608,13 +608,9 @@ class WorkflowRunner:
             A Strands tool instance (BuiltinTool, MCPTool, or StrandsAgentTool)
         """
         # Parse tool configuration if available
-        config = {}
-        print("TOOL", tool_data.get('config'))
-        if tool_data.get('config'):
-            try:
-                config = json.loads(tool_data['config'])
-            except:
-                config = cls._recover_json(tool_data['config'])
+        from mcp_helpers import parse_config
+        config = parse_config(tool_data.get('config'))
+        
                 
         # Create the appropriate tool instance based on type
         if tool_data['tool_type'] == 'builtin':
@@ -656,36 +652,15 @@ class WorkflowRunner:
             
         elif tool_data['tool_type'] == 'mcp':
             # Create an MCP client based on the config
-            command = config.get('command')
-            args = config.get('args', [])
-            env = config.get('env', {})
+            from mcp_helpers import locate_config
             
-            # Recursively search for command in the config if not found
+            command, args, env, _ = locate_config(config)
+            # Get disabled_tools from root config
+            disabled_tools = config.get('disabled_tools', [])
             if not command:
-                def find_command_in_config(config_dict):
-                    if not isinstance(config_dict, dict):
-                        return None, None, None
-                    
-                    if 'command' in config_dict:
-                        return (
-                            config_dict['command'],
-                            config_dict.get('args', []),
-                            config_dict.get('env', {})
-                        )
-                    
-                    for key, value in config_dict.items():
-                        if isinstance(value, dict):
-                            cmd, arg, env = find_command_in_config(value)
-                            if cmd:
-                                return cmd, arg, env
-                    
-                    return None, None, None
-                
-                command, args, env = find_command_in_config(config)
+                return None
+            print("DIS", disabled_tools)
 
-            print("COMMAND", command)
-            print("ARGS", args)
-            print("ENV", env)
             
             # Create MCP client using stdio transport
             mcp_client = MCPClient(lambda: stdio_client(
@@ -698,8 +673,14 @@ class WorkflowRunner:
             
             # Get tools from the MCP server
             mcp_client.start()
-            tools = mcp_client.list_tools_sync()
-            return tools
+            all_tools = mcp_client.list_tools_sync()
+
+            # Filter out disabled tools
+            if disabled_tools and all_tools:
+                filtered_tools = [tool for tool in all_tools if tool.mcp_tool.name not in disabled_tools]
+                return filtered_tools
+            
+            return all_tools
             
         elif tool_data['tool_type'] == 'agent' and tool_data.get('agent_id'):
             # For agent tools, create a function that calls the agent
@@ -785,7 +766,7 @@ class WorkflowRunner:
         # Find the active workflow context
         active_workflow = None
         active_session_id = None
-        print("RECEIVED MESSAGE", message)
+        
         # If session_id is provided, use it
         if session_id and session_id in cls._workflow_contexts:
             active_workflow = cls._workflow_contexts[session_id]
@@ -878,8 +859,7 @@ class WorkflowRunner:
         
         # Generate a system prompt describing the workflow graph
         system_prompt = cls._generate_workflow_prompt(workflow_context)
-        print("ORCHESTRATOR", system_prompt)
-        print("TOOLS " , all_tools)
+       
         
         # Create the orchestrator agent with the workflow's model if specified
         model_id = workflow_context.get('model_id')
