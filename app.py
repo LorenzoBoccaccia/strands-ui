@@ -62,9 +62,9 @@ def get_database_uri():
         db_uri = 'sqlite:///instance/strands.db'
     else:
         token = generate_dsql_token(db_uri)
-        db_uri = URL.create("postgresql", username="admin", password=token, 
+        db_uri = URL.create("postgresql+pg8000", username="admin", password=token, 
         host=db_uri, database="postgres")
-        print("DBURI", db_uri)
+    print("DBURI", db_uri)
     return db_uri
 
 # Verify AWS credentials are available

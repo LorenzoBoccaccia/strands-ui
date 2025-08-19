@@ -7,7 +7,7 @@ strands-agents[otel]
 alembic
 python-multipart
 jinja2
-psycopg2-binary
+pg8000
 markdown
 bleach
 Pygments
