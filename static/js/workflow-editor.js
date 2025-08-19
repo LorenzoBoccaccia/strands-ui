@@ -156,17 +156,55 @@ document.addEventListener('DOMContentLoaded', function() {
             nodeTitle = name || `Tool ${referenceId}`;
         }
         
-        nodeEl.innerHTML = `
-            <div class="node-title">${nodeIcon} ${nodeTitle}</div>
-            <div class="node-controls">
-                <button class="btn btn-sm btn-outline-primary connect-btn">
-                    <i class="fas fa-link"></i>
-                </button>
-                <button class="btn btn-sm btn-outline-danger delete-btn">
-                    <i class="fas fa-times"></i>
-                </button>
-            </div>
-        `;
+        // Create node title div with safe DOM manipulation
+        const nodeTitleDiv = document.createElement('div');
+        nodeTitleDiv.className = 'node-title';
+        
+        // Create and append icon element safely
+        if (nodeIcon) {
+            const iconElement = document.createElement('i');
+            // Extract icon classes from the nodeIcon string safely
+            if (type === 'input') {
+                iconElement.className = 'fas fa-sign-in-alt me-1';
+            } else if (type === 'output') {
+                iconElement.className = 'fas fa-sign-out-alt me-1';
+            } else if (type === 'agent') {
+                iconElement.className = 'fas fa-robot me-1';
+            } else if (type === 'tool') {
+                iconElement.className = 'fas fa-tools me-1';
+            }
+            nodeTitleDiv.appendChild(iconElement);
+        }
+        
+        // Add title text safely using textContent to prevent XSS
+        const titleText = document.createTextNode(' ' + nodeTitle);
+        nodeTitleDiv.appendChild(titleText);
+        
+        // Create node controls div
+        const nodeControlsDiv = document.createElement('div');
+        nodeControlsDiv.className = 'node-controls';
+        
+        // Create connect button
+        const connectBtn = document.createElement('button');
+        connectBtn.className = 'btn btn-sm btn-outline-primary connect-btn';
+        const connectIcon = document.createElement('i');
+        connectIcon.className = 'fas fa-link';
+        connectBtn.appendChild(connectIcon);
+        
+        // Create delete button
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'btn btn-sm btn-outline-danger delete-btn';
+        const deleteIcon = document.createElement('i');
+        deleteIcon.className = 'fas fa-times';
+        deleteBtn.appendChild(deleteIcon);
+        
+        // Append buttons to controls div
+        nodeControlsDiv.appendChild(connectBtn);
+        nodeControlsDiv.appendChild(deleteBtn);
+        
+        // Append all elements to node
+        nodeEl.appendChild(nodeTitleDiv);
+        nodeEl.appendChild(nodeControlsDiv);
         
         canvas.appendChild(nodeEl);
         
@@ -243,7 +281,6 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         
         // Connect button handler
-        const connectBtn = nodeEl.querySelector('.connect-btn');
         connectBtn.addEventListener('click', function() {
             if (connecting) {
                 connecting = false;
@@ -297,7 +334,6 @@ document.addEventListener('DOMContentLoaded', function() {
         });
         
         // Delete button handler
-        const deleteBtn = nodeEl.querySelector('.delete-btn');
         deleteBtn.addEventListener('click', function(e) {
             e.stopPropagation();
             
