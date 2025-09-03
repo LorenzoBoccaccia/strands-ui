@@ -106,12 +106,12 @@ document.addEventListener('DOMContentLoaded', function() {
                         createNode(response.id, data.type, data.id, x, y, data.name);
                     } else {
                         console.error('Error creating node:', xhr.statusText);
-                        alert('Failed to create node: ' + xhr.statusText);
+                        console.error('Failed to create node: ' + xhr.statusText);
                     }
                 };
                 xhr.onerror = function() {
                     console.error('Error creating node:', xhr.statusText);
-                    alert('Failed to create node: ' + xhr.statusText);
+                    console.error('Failed to create node: ' + xhr.statusText);
                 };
                 // For input/output nodes, use null for reference_id since they don't reference external entities
                 const referenceId = (data.type === 'input' || data.type === 'output') ? null : data.id;
@@ -124,7 +124,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 }));
             } catch (err) {
                 console.error('Error processing drop:', err);
-                alert('Error processing drop: ' + err.message);
+                console.error('Error processing drop: ' + err.message);
             }
         });
     }
@@ -307,7 +307,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 
                 // Check if connection is valid
                 if (!canConnect(sourceNode.type, targetNode.type)) {
-                    alert('Invalid connection: Cannot connect these node types');
+                    console.warn('Invalid connection: Cannot connect these node types');
                     return;
                 }
                 
@@ -541,13 +541,13 @@ document.addEventListener('DOMContentLoaded', function() {
         xhr.setRequestHeader('Content-Type', 'application/json');
         xhr.onload = function() {
             if (xhr.status === 200) {
-                alert('Workflow details updated successfully');
+                console.log('Workflow details updated successfully');
             } else {
-                alert('Error updating workflow details: ' + xhr.responseText);
+                console.error('Error updating workflow details: ' + xhr.responseText);
             }
         };
         xhr.onerror = function() {
-            alert('Error updating workflow details: ' + xhr.statusText);
+            console.error('Error updating workflow details: ' + xhr.statusText);
         };
         xhr.send(JSON.stringify(data));
     });

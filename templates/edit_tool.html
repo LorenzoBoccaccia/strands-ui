@@ -231,13 +231,13 @@
         });
         
         function showError(message) {
-            // Simple alert for now - could be replaced with toast notifications
-            alert('Error: ' + message);
+            // Log error to console instead of showing alert
+            console.error('Error: ' + message);
         }
         
         function showSuccess(message) {
-            // Simple alert for now - could be replaced with toast notifications
-            alert('Success: ' + message);
+            // Log success to console instead of showing alert
+            console.log('Success: ' + message);
         }
     });
 </script>

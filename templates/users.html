@@ -136,12 +136,12 @@ document.addEventListener('DOMContentLoaded', function() {
             if (data.success) {
                 window.location.reload();
             } else {
-                alert('Error: ' + data.error);
+                console.error('Error: ' + data.error);
             }
         })
         .catch(error => {
             console.error('Error:', error);
-            alert('An error occurred while adding the user.');
+            console.error('An error occurred while adding the user.');
         });
     });
     
@@ -166,12 +166,12 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (data.success) {
                     window.location.reload();
                 } else {
-                    alert('Error: ' + data.error);
+                    console.error('Error: ' + data.error);
                 }
             })
             .catch(error => {
                 console.error('Error:', error);
-                alert('An error occurred while updating the profile.');
+                console.error('An error occurred while updating the profile.');
             });
         });
     });
@@ -208,14 +208,14 @@ document.addEventListener('DOMContentLoaded', function() {
         .then(data => {
             if (data.success) {
                 $('#resetPasswordModal').modal('hide');
-                alert('Password reset successfully');
+                console.log('Password reset successfully');
             } else {
-                alert('Error: ' + data.error);
+                console.error('Error: ' + data.error);
             }
         })
         .catch(error => {
             console.error('Error:', error);
-            alert('An error occurred while resetting the password.');
+            console.error('An error occurred while resetting the password.');
         });
     });
 });
